@@ -1,0 +1,30 @@
+name: Start Floci
+description: Levanta Floci (AWS emulado) y crea el backend remoto de Terraform (S3 versionado + locks)
+inputs:
+  bootstrap:
+    description: Ejecutar terraform bootstrap del backend
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        if ! curl -sf http://localhost:4566/_floci/health >/dev/null 2>&1; then
+          docker run -d --name aegisvolt-floci -p 4566:4566 \
+            --add-host host.docker.internal:host-gateway \
+            -v /var/run/docker.sock:/var/run/docker.sock -u root floci/floci:latest
+          for i in $(seq 1 60); do curl -sf http://localhost:4566/_floci/health >/dev/null && break; sleep 2; done
+        fi
+        echo "AWS_ENDPOINT_URL=http://localhost:4566" >> "$GITHUB_ENV"
+        echo "AWS_ACCESS_KEY_ID=test" >> "$GITHUB_ENV"
+        echo "AWS_SECRET_ACCESS_KEY=test" >> "$GITHUB_ENV"
+        echo "AWS_REGION=us-east-1" >> "$GITHUB_ENV"
+        echo "AWS_DEFAULT_REGION=us-east-1" >> "$GITHUB_ENV"
+    - if: inputs.bootstrap == 'true'
+      shell: bash
+      working-directory: infra/terraform/bootstrap
+      run: |
+        if ! aws s3api head-bucket --bucket aegisvolt-tfstate --endpoint-url http://localhost:4566 2>/dev/null; then
+          terraform init -input=false
+          terraform apply -auto-approve -input=false
+        fi

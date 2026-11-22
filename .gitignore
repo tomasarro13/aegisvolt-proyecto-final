@@ -1,0 +1,27 @@
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan*
+crash.log
+.terraform.lock.hcl.bak
+# kubeconfigs generados
+.kube/
+# Prefect / Python
+__pycache__/
+.venv/
+*.pyc
+.DS_Store
+/.local-logs/
+# Guía personal de estudio/demostración (no se versiona)
+/docs/

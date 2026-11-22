@@ -1,0 +1,45 @@
+# AegisVolt - entorno local (Floci emula AWS sin costo)
+services:
+  floci:
+    image: floci/floci:latest
+    container_name: aegisvolt-floci
+    ports:
+      - "4566:4566"
+    environment:
+      FLOCI_DEFAULT_REGION: us-east-1
+      FLOCI_STORAGE_MODE: hybrid          # persiste estado (tfstate, tablas) entre reinicios
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+      FLOCI_HOSTNAME: floci
+    volumes:
+      - floci-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock   # EKS (k3s) y ECR usan contenedores reales
+    user: root
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4566/_floci/health >/dev/null 2>&1 || curl -sf http://localhost:4566/_floci/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # Servidor Prefect (UI http://localhost:4200). Recibe en vivo cada SAGA del orquestador
+  # (flow run + task runs de pasos y compensaciones) y los flujos de observabilidad.
+  # scripts/deploy.sh lo conecta a la red de la VPC de cada ambiente para que los pods lo alcancen.
+  prefect:
+    image: prefecthq/prefect:3.9.4-python3.12
+    container_name: aegisvolt-prefect
+    command: prefect server start --host 0.0.0.0 --port 4200
+    ports:
+      - "4200:4200"
+    environment:
+      PREFECT_UI_API_URL: http://localhost:4200/api
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+    volumes:
+      - prefect-data:/root/.prefect
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:4200/api/health')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  floci-data:
+  prefect-data:

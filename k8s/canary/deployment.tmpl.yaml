@@ -1,0 +1,51 @@
+# Plantilla del Deployment CANARY (la instancia scripts/canary-deploy.sh).
+# Mismo label app => el Service le envía tráfico proporcional a sus réplicas
+# (1 canary vs 4 stable = 20 %). track=canary permite medir sus errores en CloudWatch.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${SERVICE}-canary
+  namespace: aegisvolt
+  labels: { app: ${SERVICE}, track: canary, app.kubernetes.io/part-of: aegisvolt }
+  annotations:
+    aegisvolt/canary-version: "${VERSION}"
+spec:
+  replicas: ${CANARY_REPLICAS}
+  selector:
+    matchLabels: { app: ${SERVICE}, track: canary }
+  template:
+    metadata:
+      labels: { app: ${SERVICE}, track: canary }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: app
+          image: ${IMAGE}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: ${PORT}
+          envFrom:
+            - configMapRef: { name: aegisvolt-config }
+            - secretRef: { name: aegisvolt-aws, optional: true }
+          env:
+            - { name: PORT, value: "${PORT}" }
+            - { name: SERVICE_VERSION, value: "${VERSION}" }
+            # Solo para la demo de rollback: % de errores inyectados en el canary (0 = normal)
+            - { name: CHAOS_ERROR_RATE, value: "${CHAOS_ERROR_RATE}" }
+            - name: DEPLOYMENT_TRACK
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['track']" } }
+            - { name: STATION_SERVICE_URL, value: "http://station-reservation-service:4001" }
+            - { name: BILLING_SERVICE_URL, value: "http://billing-wallet-service:4002" }
+            - { name: DISPATCH_SERVICE_URL, value: "http://energy-dispatch-service:4003" }
+          readinessProbe:
+            httpGet: { path: /health/ready, port: ${PORT} }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health/live, port: ${PORT} }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }

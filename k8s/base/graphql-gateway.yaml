@@ -1,0 +1,66 @@
+# graphql-gateway: Deployment "stable" + Service. El Service selecciona por app (no por track),
+# por lo que reparte tráfico entre pods stable y canary en proporción a sus réplicas.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graphql-gateway-stable
+  labels: { app: graphql-gateway, track: stable, app.kubernetes.io/part-of: aegisvolt }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: graphql-gateway, track: stable }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app: graphql-gateway, track: stable }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: app
+          image: aegisvolt/graphql-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef: { name: aegisvolt-config }
+            - secretRef: { name: aegisvolt-aws, optional: true }
+          env:
+            - name: PORT
+              value: "4000"
+            - name: DEPLOYMENT_TRACK
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['track']" } }
+            - name: STATION_SERVICE_URL
+              value: "http://station-reservation-service:4001"
+            - name: BILLING_SERVICE_URL
+              value: "http://billing-wallet-service:4002"
+            - name: DISPATCH_SERVICE_URL
+              value: "http://energy-dispatch-service:4003"
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4000 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: graphql-gateway
+  labels: { app: graphql-gateway }
+spec:
+  type: NodePort
+  selector: { app: graphql-gateway }
+  ports:
+    - port: 4000
+      targetPort: 4000
+      nodePort: 30080

@@ -1,0 +1,57 @@
+# =============================================================================
+# CD (post-merge): un push a dev/test/prod solo puede venir de un PR fusionado
+# (push directo bloqueado por las reglas de la rama). El ambiente se deriva de la rama:
+#   rama dev  -> terraform workspace dev  -> clúster aegisvolt-dev
+#   rama test -> terraform workspace test -> clúster aegisvolt-test
+#   rama prod -> terraform workspace prod -> clúster aegisvolt-prod
+# El despliegue a Kubernetes usa Canary con verificación de errores en CloudWatch y rollback automático.
+# =============================================================================
+name: cd
+
+on:
+  push:
+    branches: [dev, test, prod]
+
+concurrency:
+  group: cd-${{ github.ref_name }}   # nunca dos deploys simultáneos sobre el mismo ambiente
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy-${{ github.ref_name }}
+    # Los ambientes estáticos viven en Floci (máquina del equipo) => runner self-hosted.
+    runs-on: ${{ vars.CD_RUNNER || 'self-hosted' }}
+    environment: ${{ github.ref_name }}   # GitHub Environment (permite exigir aprobación manual en prod)
+    env:
+      TARGET_ENV: ${{ github.ref_name }}
+      VERSION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Detectar ambiente destino a partir de la rama
+        run: |
+          case "$TARGET_ENV" in dev|test|prod) ;; *) echo "::error::rama no desplegable"; exit 1;; esac
+          echo "Desplegando $VERSION en $TARGET_ENV"
+
+      - uses: ./.github/actions/floci
+
+      - name: CD del ambiente (terraform apply del workspace + canary + smoke test + rollback automático)
+        # scripts/cd.sh: foto de imágenes -> terraform apply -> canary por servicio -> smoke test.
+        # Si el canary o el smoke test fallan, revierte TODOS los servicios a la foto previa y el job queda en rojo.
+        run: scripts/cd.sh "$TARGET_ENV" "${VERSION:0:12}"
+        env:
+          ANALYSIS_SECONDS: ${{ vars.CANARY_ANALYSIS_SECONDS || '60' }}
+          MAX_ERROR_RATE: ${{ vars.CANARY_MAX_ERROR_RATE || '0.05' }}
+
+      - name: Evidencia del despliegue
+        if: always()
+        run: |
+          {
+            echo "## CD \`$TARGET_ENV\` · ${VERSION:0:12}"
+            echo '```'
+            KUBECONFIG=.kube/$TARGET_ENV.yaml kubectl -n aegisvolt get deploy -o wide 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

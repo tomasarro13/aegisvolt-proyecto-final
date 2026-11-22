@@ -1,0 +1,16 @@
+# Solo el gateway recibe tráfico externo (NodePort desde el VPC Link); los microservicios solo aceptan
+# tráfico del gateway: el desacople se refuerza también a nivel de red.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-services-from-gateway-only
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [station-reservation-service, billing-wallet-service, energy-dispatch-service] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: graphql-gateway } }
+        # pod efímero de análisis del Canary Deployment
+        - podSelector: { matchLabels: { role: canary-probe } }

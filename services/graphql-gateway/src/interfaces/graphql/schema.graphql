@@ -1,0 +1,195 @@
+"""
+AegisVolt — esquema GraphQL unificado (capa de agregación sobre los microservicios).
+Queries: consulta de estaciones, telemetría, billeteras, feature flags y SAGAs.
+Mutations: inicio de la SAGA "Reservar y Activar Carga", fin de sesión y administración.
+"""
+schema {
+  query: Query
+  mutation: Mutation
+}
+
+type Query {
+  "Ambiente (dev/test/prod), versión desplegada y track (stable/canary) que atendió la petición."
+  environment: EnvironmentInfo!
+  "Estado de salud de cada microservicio."
+  systemHealth: [ServiceHealth!]!
+  stations(city: String): [Station!]!
+  station(id: ID!): Station
+  wallets: [Wallet!]!
+  wallet(fleetId: ID!): Wallet
+  featureFlags: [FeatureFlag!]!
+  priceQuote(estimatedKwh: Float!, powerKw: Float!, fastChargeBoost: Boolean = false): PriceQuote!
+  sagas(limit: Int = 25): [SagaTransaction!]!
+  saga(id: ID!): SagaTransaction
+  chargingSessions(limit: Int = 25): [ChargingSession!]!
+  telemetry(sagaId: ID!, limit: Int = 60): [TelemetrySample!]!
+}
+
+type Mutation {
+  "Dispara la SAGA distribuida: reserva (paso 1) -> cobro (paso 2) -> activación física (paso 3)."
+  reserveAndActivateCharging(input: ReserveAndActivateInput!): SagaTransaction!
+  stopChargingSession(sagaId: ID!): SagaTransaction!
+  setFeatureFlag(key: FlagKey!, enabled: Boolean!): FeatureFlag!
+  topUpWallet(fleetId: ID!, amount: Float!): Wallet!
+}
+
+input ReserveAndActivateInput {
+  fleetId: ID!
+  stationId: ID!
+  connectorId: ID!
+  estimatedKwh: Float!
+  fastChargeBoost: Boolean = false
+  "Opcional: reenviar la misma clave devuelve la misma SAGA (idempotencia de cliente)."
+  idempotencyKey: String
+}
+
+enum FlagKey {
+  ENABLE_DYNAMIC_SURGE_PRICING
+  ENABLE_FAST_CHARGE_BOOST
+  SIMULATE_CHARGER_HARDWARE_FAULT
+}
+
+enum ConnectorStatus { AVAILABLE RESERVED CHARGING OUT_OF_SERVICE }
+
+enum SagaStatus { STARTED COMPLETED FINISHED FAILED COMPENSATING COMPENSATED COMPENSATION_FAILED }
+
+enum StepStatus { PENDING SUCCEEDED FAILED COMPENSATED COMPENSATION_FAILED SKIPPED }
+
+type EnvironmentInfo {
+  name: String!
+  version: String!
+  track: String!
+  region: String!
+  flagMutationsAllowed: Boolean!
+  serverTime: String!
+}
+
+type ServiceHealth {
+  service: String!
+  status: String!
+  latencyMs: Int!
+  detail: String
+}
+
+type Station {
+  id: ID!
+  name: String!
+  city: String!
+  address: String!
+  latitude: Float!
+  longitude: Float!
+  availableConnectors: Int!
+  connectors: [Connector!]!
+}
+
+type Connector {
+  id: ID!
+  stationId: ID!
+  type: String!
+  powerKw: Float!
+  status: ConnectorStatus!
+  reservedBy: ID
+  reservedUntil: String
+  updatedAt: String
+}
+
+type Wallet {
+  fleetId: ID!
+  fleetName: String!
+  balance: Float!
+  currency: String!
+  updatedAt: String
+  ledger: [LedgerEvent!]!
+}
+
+type LedgerEvent {
+  type: String!
+  sagaId: ID
+  amount: Float!
+  balanceAfter: Float!
+  reason: String
+  at: String!
+}
+
+type FeatureFlag {
+  key: FlagKey!
+  enabled: Boolean!
+  description: String!
+  environment: String!
+  updatedAt: String
+  updatedBy: String
+}
+
+type PriceQuote {
+  estimatedKwh: Float!
+  baseRatePerKwh: Float!
+  surgeMultiplier: Float!
+  boostMultiplier: Float!
+  total: Float!
+  currency: String!
+  strategy: String!
+}
+
+type SagaTransaction {
+  id: ID!
+  type: String!
+  environment: String!
+  status: SagaStatus!
+  fleetId: ID!
+  stationId: ID!
+  connectorId: ID!
+  estimatedKwh: Float!
+  chargedAmount: Float
+  currency: String
+  pricingStrategy: String
+  surgeMultiplier: Float
+  priorityBoost: Boolean
+  steps: [SagaStep!]!
+  failure: SagaFailure
+  compensated: Boolean!
+  "Flow run de esta SAGA en Prefect (pasos y compensaciones como task runs)."
+  prefectRunUrl: String
+  createdAt: String!
+  updatedAt: String!
+}
+
+type SagaStep {
+  name: String!
+  service: String!
+  status: StepStatus!
+  attempts: Int!
+  startedAt: String
+  finishedAt: String
+  compensatedAt: String
+  errorCode: String
+  errorMessage: String
+}
+
+type SagaFailure {
+  step: String!
+  code: String!
+  message: String!
+}
+
+type ChargingSession {
+  sagaId: ID!
+  stationId: ID!
+  connectorId: ID!
+  fleetId: ID!
+  powerKw: Float!
+  targetKwh: Float!
+  deliveredKwh: Float!
+  status: String!
+  failureReason: String
+  startedAt: String!
+  stoppedAt: String
+}
+
+type TelemetrySample {
+  at: String!
+  powerKw: Float!
+  deliveredKwh: Float!
+  voltageV: Float!
+  currentA: Float!
+  temperatureC: Float!
+}

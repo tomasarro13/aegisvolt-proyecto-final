@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/.next
+.git
+infra
+k8s
+observability
+docs
+.github
+**/*.tfstate*

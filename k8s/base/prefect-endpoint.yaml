@@ -1,0 +1,20 @@
+# Servidor Prefect accesible desde los pods por IP privada dentro de la VPC del ambiente
+# (scripts/deploy.sh conecta el contenedor de Prefect a la red de la VPC y reemplaza PREFECT_IP).
+apiVersion: v1
+kind: Service
+metadata:
+  name: prefect-api
+spec:
+  ports:
+    - port: 4200
+      targetPort: 4200
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: prefect-api
+subsets:
+  - addresses:
+      - ip: PREFECT_IP
+    ports:
+      - port: 4200

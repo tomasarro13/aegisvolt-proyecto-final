@@ -1,0 +1,59 @@
+# energy-dispatch-service: Deployment "stable" + Service. El Service selecciona por app (no por track),
+# por lo que reparte tráfico entre pods stable y canary en proporción a sus réplicas.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: energy-dispatch-service-stable
+  labels: { app: energy-dispatch-service, track: stable, app.kubernetes.io/part-of: aegisvolt }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: energy-dispatch-service, track: stable }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app: energy-dispatch-service, track: stable }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: app
+          image: aegisvolt/energy-dispatch-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4003
+          envFrom:
+            - configMapRef: { name: aegisvolt-config }
+            - secretRef: { name: aegisvolt-aws, optional: true }
+          env:
+            - name: PORT
+              value: "4003"
+            - name: DEPLOYMENT_TRACK
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['track']" } }
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4003 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4003 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: energy-dispatch-service
+  labels: { app: energy-dispatch-service }
+spec:
+  type: ClusterIP
+  selector: { app: energy-dispatch-service }
+  ports:
+    - port: 4003
+      targetPort: 4003

@@ -1,0 +1,28 @@
+{
+  "name": "@aegisvolt/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "^3.1175.0",
+    "@aws-sdk/client-dynamodb": "^3.1175.0",
+    "@aws-sdk/lib-dynamodb": "^3.1175.0",
+    "express": "^5.1.0",
+    "undici": "^7.30.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3"
+  }
+}

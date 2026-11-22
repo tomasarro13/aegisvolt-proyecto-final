@@ -1,0 +1,42 @@
+@import "tailwindcss";
+/* Tailwind escanea también los bundles de HyperMotion (usan clases utilitarias propias). */
+@source "../../public/vendor/hypermotion";
+
+@theme {
+  --color-background: #07090c;
+  --color-background-muted: #0e1217;
+  --color-background-inset: #141a21;
+  --color-foreground: #e9eef2;
+  --color-foreground-muted: #8a96a3;
+  --color-border: #1f2731;
+  --color-accent: #c9fd34;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
+  --color-info: #60a5fa;
+  --color-env-dev: #60a5fa;
+  --color-env-test: #fbbf24;
+  --color-env-prod: #f87171;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --ease-motion-core: cubic-bezier(0.625, 0.05, 0, 1);
+}
+
+html, body { background: var(--color-background); color: var(--color-foreground); }
+body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+::selection { background: color-mix(in oklab, var(--color-accent) 35%, transparent); }
+
+.panel {
+  @apply rounded-2xl border border-border bg-background-muted/80 backdrop-blur-sm;
+}
+.panel-title { @apply text-xs font-medium uppercase tracking-[0.18em] text-foreground-muted; }
+.chip { @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium; }
+.tone-ok { @apply border-ok/30 bg-ok/10 text-ok; }
+.tone-warn { @apply border-warn/30 bg-warn/10 text-warn; }
+.tone-bad { @apply border-bad/30 bg-bad/10 text-bad; }
+.tone-info { @apply border-info/30 bg-info/10 text-info; }
+.tone-idle { @apply border-border bg-background-inset text-foreground-muted; }
+.btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40; }
+.btn-accent { @apply bg-accent text-background hover:brightness-110; }
+.btn-ghost { @apply border border-border text-foreground hover:bg-background-inset; }
+.input { @apply w-full rounded-lg border border-border bg-background-inset px-3 py-2 text-sm text-foreground outline-none focus:border-accent/60; }

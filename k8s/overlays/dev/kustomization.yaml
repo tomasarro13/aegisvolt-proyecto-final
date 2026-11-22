@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aegisvolt
+resources:
+  - ../../base
+configMapGenerator:
+  - name: aegisvolt-config
+    behavior: create
+    options:
+      disableNameSuffixHash: true
+    literals:
+      - ENVIRONMENT=dev
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://aws-private-endpoint:4566
+      - CLOUDWATCH_ENABLED=true
+      - LOG_LEVEL=info
+      - SURGE_PEAK_HOURS=0-24
+      - SURGE_TIMEZONE=America/Bogota
+      - TELEMETRY_INTERVAL_MS=5000
+      - PREFECT_API_URL=http://prefect-api:4200/api
+      - PREFECT_UI_URL=http://localhost:4200
+      - ALLOW_FLAG_MUTATIONS=true
+replicas:
+  - name: graphql-gateway-stable
+    count: 2
+  - name: station-reservation-service-stable
+    count: 2
+  - name: billing-wallet-service-stable
+    count: 2
+  - name: energy-dispatch-service-stable
+    count: 2

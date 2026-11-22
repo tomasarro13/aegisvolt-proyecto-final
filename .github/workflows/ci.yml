@@ -1,0 +1,166 @@
+# =============================================================================
+# CI (pre-merge): se ejecuta en cada Pull Request hacia dev, test o prod.
+# Todos los jobs son "required status checks" en las reglas de protección de rama:
+# el botón de Merge solo se habilita si todos terminan en verde.
+# =============================================================================
+name: ci
+
+on:
+  pull_request:
+    branches: [dev, test, prod]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  NODE_VERSION: "22"
+  TARGET_ENV: ${{ github.base_ref }}   # ambiente destino = rama destino del PR
+
+jobs:
+  promotion-guard:
+    name: promotion-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar flujo de promoción feature/* -> dev -> test -> prod
+        env:
+          HEAD: ${{ github.head_ref }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          echo "PR: $HEAD -> $BASE"
+          case "$BASE" in
+            dev)  [[ "$HEAD" =~ ^(feature|fix|chore|docs|refactor|test)/.+ ]] || { echo "::error::Hacia dev solo entran ramas feature/*, fix/*, chore/*, docs/*, refactor/*, test/* (recibido: $HEAD)"; exit 1; } ;;
+            test) [ "$HEAD" = "dev" ]  || { echo "::error::Hacia test solo se promueve desde dev (recibido: $HEAD)"; exit 1; } ;;
+            prod) [ "$HEAD" = "test" ] || { echo "::error::Hacia prod solo se promueve desde test (recibido: $HEAD)"; exit 1; } ;;
+            *)    echo "::error::Rama destino no permitida: $BASE"; exit 1 ;;
+          esac
+          echo "Promoción válida ✅"
+
+  lint-build:
+    name: lint-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - run: npm ci
+      - name: ESLint (incluye reglas de dependencia de Clean Architecture)
+        run: npm run lint
+      - name: Compilar TypeScript (shared + 4 microservicios)
+        run: npm run build
+      - name: Validar esquema GraphQL
+        run: npm run graphql:validate
+      - name: Build frontend
+        run: npm run build -w frontend
+      - name: Build de imágenes Docker
+        run: |
+          for svc in graphql-gateway station-reservation-service billing-wallet-service energy-dispatch-service; do
+            docker build --build-arg SERVICE=$svc --build-arg VERSION=${{ github.sha }} -t aegisvolt/$svc:${{ github.sha }} .
+          done
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_wrapper: false }
+      - name: Terraform fmt / validate
+        run: |
+          terraform -chdir=infra/terraform fmt -check -recursive
+          terraform -chdir=infra/terraform init -backend=false -input=false
+          terraform -chdir=infra/terraform validate
+
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - run: npm ci
+      - name: Pruebas unitarias (lógica de negocio y compensaciones SAGA)
+        run: npm run test:unit
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.12" }
+      - name: Pruebas unitarias de reglas de auditoría (Prefect)
+        working-directory: observability/prefect
+        run: |
+          pip install -q -r requirements.txt
+          python -m pytest -q tests
+
+  integration-tests:
+    name: integration-tests
+    runs-on: ubuntu-latest
+    needs: [lint-build]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_wrapper: false }
+      - uses: ./.github/actions/floci
+      - run: npm ci && npm run build
+      - name: Pruebas de integración (repositorios DynamoDB + endpoint GraphQL)
+        run: npm run test:integration
+
+  e2e-tests:
+    name: e2e-tests
+    runs-on: ubuntu-latest
+    needs: [lint-build]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm }
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_wrapper: false }
+      - uses: ./.github/actions/floci
+      - run: npm ci && npm run build && npm run build -w frontend
+      - name: Infraestructura efímera del ambiente destino (sin EKS) en Floci
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false -backend-config=backend/floci.hcl
+          terraform workspace select -or-create "$TARGET_ENV"
+          terraform apply -auto-approve -input=false -var enable_eks=false -var fallback_backend_url=http://host.docker.internal:4000
+          echo "GRAPHQL_URL=$(terraform output -raw graphql_url)" >> "$GITHUB_ENV"
+      - name: Levantar microservicios + frontend
+        run: scripts/run-local.sh "$TARGET_ENV" --background
+      - name: E2E (Frontend BFF -> API Gateway -> GraphQL -> microservicios -> DynamoDB)
+        run: npm run test:e2e
+        env:
+          E2E_GRAPHQL_URL: ${{ env.GRAPHQL_URL }}
+          E2E_FRONTEND_URL: http://localhost:3100
+          E2E_ENVIRONMENT: ${{ env.TARGET_ENV }}
+      - name: Logs de servicios
+        if: failure()
+        run: tail -n 80 .local-logs/*.log || true
+
+  terraform-plan:
+    name: terraform-plan
+    # Con runner self-hosted (vars.TF_RUNNER) el plan se calcula contra el estado REAL del ambiente.
+    runs-on: ${{ vars.TF_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_wrapper: false }
+      - uses: ./.github/actions/floci
+      - name: Seleccionar workspace del ambiente destino y planificar
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false -backend-config=backend/floci.hcl
+          terraform workspace select -or-create "$TARGET_ENV"
+          test "$(terraform workspace show)" = "$TARGET_ENV"
+          terraform plan -input=false -no-color -out=tfplan-$TARGET_ENV | tee plan.txt
+          {
+            echo "## terraform plan · workspace \`$TARGET_ENV\`"
+            echo '```'; grep -E "^Plan:|No changes" plan.txt || true; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: tfplan-${{ env.TARGET_ENV }}
+          path: infra/terraform/plan.txt
+      - name: Comentar plan en el PR
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SUMMARY=$(grep -E "^Plan:|No changes" infra/terraform/plan.txt || echo "ver artifact")
+          gh pr comment ${{ github.event.pull_request.number }} --body "**terraform plan** (workspace \`$TARGET_ENV\`): $SUMMARY"
